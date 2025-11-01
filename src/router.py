@@ -48,10 +48,34 @@ async def get_image(image_id: str):
 
 
 @agent_router.post("/a2a")
-async def a2a_endpoint(request: JSONRPCRequest) -> JSONRPCResponse:
+async def a2a_endpoint(raw_request: JSONRPCRequest):
     """Main A2A JSON-RPC 2.0 endpoint"""
     
-    logger.info(f"Received A2A request - Method: {request.method}, ID: {request.id}")
+    # Log the raw request body to see what Telex is sending
+    try:
+        body = await raw_request.json()
+        logger.info(f"Received raw request: {body}")
+    except Exception as e:
+        logger.error(f"Failed to parse request: {str(e)}")
+        return JSONRPCResponse(
+            id="unknown",
+            error={"code": -32700, "message": "Parse error"}
+        )
+    
+    # Now try to parse with Pydantic
+    try:
+        request = JSONRPCRequest(**body)
+        logger.info(f"Successfully parsed - Method: {request.method}, ID: {request.id}")
+    except Exception as e:
+        logger.error(f"Pydantic validation error: {str(e)}")
+        logger.error(f"Request body was: {body}")
+        return JSONRPCResponse(
+            id=body.get("id", "unknown"),
+            error={
+                "code": -32602,
+                "message": f"Invalid params: {str(e)}"
+            }
+        )
     
     try:
         # Handle message/send method
