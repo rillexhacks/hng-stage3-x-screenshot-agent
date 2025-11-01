@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from typing import Optional
 import json
-
+import re
 
 class HelperFunctions:
     # Helper Functions
@@ -118,40 +118,20 @@ class HelperFunctions:
         if verified:
             name_bbox = draw.textbbox((name_x, name_y), display_name, font=name_font)
             name_width = name_bbox[2] - name_bbox[0]
-            badge_x = name_x + name_width + 4
-            badge_y = name_y + 3  # Adjusted vertical position
-            badge_size = 12
+            badge_x = name_x + name_width + 6
+            badge_y = name_y + 2
 
-            # Blue circle
-            draw.ellipse(
-                [badge_x, badge_y, badge_x + badge_size, badge_y + badge_size],
-                fill=blue_color,
-            )
+            badge_img = Image.open("icons/twitter_verified_badge.png").convert("RGBA")
+            badge_img = badge_img.resize((16, 16), Image.Resampling.LANCZOS)  # 👈 scaled down
 
-            # White checkmark (centered)
-            try:
-                check_font = ImageFont.truetype("fonts/Inter-Bold.ttf", 9)
-            except:
-                check_font = name_font
+            img.paste(badge_img, (int(badge_x), int(badge_y)), badge_img)
 
-            # Get checkmark dimensions for proper centering
-            check_bbox = draw.textbbox((0, 0), "✓", font=check_font)
-            check_width = check_bbox[2] - check_bbox[0]
-            check_height = check_bbox[3] - check_bbox[1]
-
-            # Calculate center position
-            check_x = badge_x + (badge_size - check_width) / 2
-            check_y = (
-                badge_y + (badge_size - check_height) / 2 - 1
-            )  # -1 for visual centering
-
-            draw.text((check_x, check_y), "✓", font=check_font, fill=(255, 255, 255))
 
         # === FOLLOW BUTTON (Top Right) ===
         follow_button_width = 80
         follow_button_height = 32
         follow_button_x = width - padding - follow_button_width
-        follow_button_y = y_position
+        follow_button_y = y_position 
 
         # Draw rounded rectangle for follow button
         draw.rounded_rectangle(
@@ -220,7 +200,8 @@ class HelperFunctions:
         timestamp_text = (
             timestamp
             if timestamp
-            else datetime.now().strftime("%-I:%M %p · %b %-d, %Y")
+            else datetime.now().strftime("%I:%M %p · %b %d, %Y").lstrip("0").replace(" 0", " ")
+
         )
         draw.text(
             (padding, text_y), timestamp_text, font=timestamp_font, fill=gray_color
@@ -348,3 +329,92 @@ class HelperFunctions:
         img.save(filepath, format="PNG", quality=95, optimize=True)
 
         return filepath
+
+
+    def parse_tweet_request(text: str) -> dict:
+        result = {}
+        text_lower = text.lower().strip()
+        
+        # Check for verification
+        if "verified" in text_lower:
+            result["verified"] = True
+        
+        # Extract engagement metrics FIRST (before extracting tweet text)
+        # Pattern: "with 100 likes"
+        likes_match = re.search(r"with\s+(\d+(?:k|m)?)\s+likes?", text, re.IGNORECASE)
+        if likes_match:
+            result["likes"] = HelperFunctions.parse_number(likes_match.group(1))
+        
+        # Pattern: "50 retweets"
+        retweets_match = re.search(r"(\d+(?:k|m)?)\s+retweets?", text, re.IGNORECASE)
+        if retweets_match:
+            result["retweets"] = HelperFunctions.parse_number(retweets_match.group(1))
+        
+        # Pattern: "10 replies"
+        replies_match = re.search(r"(\d+(?:k|m)?)\s+repl(?:y|ies)", text, re.IGNORECASE)
+        if replies_match:
+            result["replies"] = HelperFunctions.parse_number(replies_match.group(1))
+        
+        # Pattern: "500 views"
+        views_match = re.search(r"(\d+(?:k|m)?)\s+views?", text, re.IGNORECASE)
+        if views_match:
+            result["views"] = HelperFunctions.parse_number(views_match.group(1))
+        
+        # Now extract tweet text (everything between "saying" and "with" or end of string)
+        # Pattern 1: "for <username> saying <tweet_text> [with ...]"
+        pattern1 = r"(?:create|generate|make|tweet)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?for\s+@?(\w+)\s+saying\s+(.+?)(?:\s+with\s+|\s*$)"
+        match = re.search(pattern1, text, re.IGNORECASE)
+        
+        if match:
+            result["username"] = match.group(1).lower()
+            result["display_name"] = match.group(1).title()
+            result["tweet_text"] = match.group(2).strip()
+            return result
+        
+        # Pattern 2: "saying <tweet_text> [with ...]" without username
+        pattern2 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)(?:\s+with\s+|\s*$)"
+        match = re.search(pattern2, text, re.IGNORECASE)
+        
+        if match:
+            result["tweet_text"] = match.group(1).strip()
+            return result
+        
+        # Pattern 3: Direct tweet text (no "saying" keyword)
+        # If text doesn't start with command words, treat it as direct tweet content
+        command_words = ["create", "generate", "make", "tweet", "post", "verified"]
+        starts_with_command = any(text_lower.startswith(word) for word in command_words)
+        
+        if not starts_with_command and text.strip():
+            result["tweet_text"] = text.strip()
+            return result
+        
+        # Pattern 4: Just command words with text (fallback)
+        # Matches: "create a tweet hello world", "make tweet test"
+        pattern4 = r"(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet\s+(.+?)(?:\s+with\s+|\s*$)"
+        match = re.search(pattern4, text, re.IGNORECASE)
+        
+        if match:
+            result["tweet_text"] = match.group(1).strip()
+            return result
+        
+        return result
+
+
+    def parse_number(num_str: str) -> int:
+        """
+        Parse number strings like '1k', '2.5m', '100' to integers
+        
+        Examples:
+        - '100' -> 100
+        - '1k' -> 1000
+        - '1.5k' -> 1500
+        - '2m' -> 2000000
+        """
+        num_str = num_str.lower().strip()
+        
+        if 'k' in num_str:
+            return int(float(num_str.replace('k', '')) * 1000)
+        elif 'm' in num_str:
+            return int(float(num_str.replace('m', '')) * 1000000)
+        else:
+            return int(num_str)

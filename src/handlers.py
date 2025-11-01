@@ -4,7 +4,9 @@ from src.dependencies import redis_client
 from src.utils import HelperFunctions
 import uuid
 
+
 from src.schemas import (
+    ArtifactPart,
     JSONRPCRequest,
     JSONRPCResponse,
     TaskResult,
@@ -14,24 +16,34 @@ from src.schemas import (
     Artifact
 )
 
-class Handler:
 
+
+
+class Handler:
+    @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle message/send requests"""
         
         params = request.params
         message = params.message
         
+        # Get or generate contextId
+        context_id = message.contextId or str(uuid.uuid4())
+        task_id = message.taskId or str(uuid.uuid4())
+        
         # Extract tweet data from message parts
         tweet_data = {}
+        user_text = ""
         
         for part in message.parts:
             if part.kind == "text":
-                # Parse text for tweet content
-                tweet_data["tweet_text"] = part.text
+                user_text = part.text
+                # Parse natural language using regex
+                parsed_data = HelperFunctions.parse_tweet_request(part.text)
+                tweet_data.update(parsed_data)
             
             elif part.kind == "data":
-                # Extract structured data
+                # Structured data takes precedence over parsed data
                 if part.data:
                     tweet_data.update(part.data)
         
@@ -41,13 +53,13 @@ class Handler:
                 id=request.id,
                 error={
                     "code": -32602,
-                    "message": "Missing required field: tweet_text"
+                    "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
                 }
             )
         
         # Set defaults
         username = tweet_data.get("username", "user")
-        display_name = tweet_data.get("display_name", "User")
+        display_name = tweet_data.get("display_name", username.title())
         tweet_text = tweet_data["tweet_text"]
         verified = tweet_data.get("verified", False)
         likes = tweet_data.get("likes", 0)
@@ -88,34 +100,33 @@ class Handler:
                 MessagePart(
                     kind="file",
                     file_url=image_url
-                ),
-                MessagePart(
-                    kind="data",
-                    data={
-                        "image_id": image_id,
-                        "image_url": image_url,
-                        "username": username,
-                        "display_name": display_name
-                    }
                 )
             ],
-            taskId=message.taskId
+            taskId=task_id,
+            contextId=context_id
         )
         
         # Create artifact
         artifact = Artifact(
             name=f"twitter_screenshot_{username}.png",
-            file_url=image_url
+            parts=[
+                ArtifactPart(
+                    kind="file",
+                    file_url=image_url
+                )
+            ]
         )
         
         # Create task result
         task_result = TaskResult(
-            id=message.taskId or str(uuid.uuid4()),
+            id=task_id,
+            contextId=context_id,
             status=TaskStatus(
-                state="completed",
+                state="input-required",
                 message=response_message
             ),
-            artifacts=[artifact]
+            artifacts=[artifact],
+            history=[]
         )
         
         return JSONRPCResponse(
@@ -123,11 +134,16 @@ class Handler:
             result=task_result
         )
 
+    @staticmethod
     async def handle_execute(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle execute requests (batch processing)"""
         
         params = request.params
         messages = params.messages
+        
+        # Get or generate contextId
+        context_id = params.contextId or str(uuid.uuid4())
+        task_id = params.taskId or str(uuid.uuid4())
         
         # Process all messages
         all_artifacts = []
@@ -140,17 +156,23 @@ class Handler:
             
             for part in message.parts:
                 if part.kind == "text":
-                    tweet_data["tweet_text"] = part.text
+                    # Parse natural language
+                    parsed_data = HelperFunctions.parse_tweet_request(part.text)
+                    tweet_data.update(parsed_data)
                 elif part.kind == "data" and part.data:
                     tweet_data.update(part.data)
             
             if "tweet_text" not in tweet_data:
                 continue
             
+            # Set defaults
+            username = tweet_data.get("username", "user")
+            display_name = tweet_data.get("display_name", username.title())
+            
             # Generate screenshot
-            filepath =  HelperFunctions.generate_tweet_screenshot(
-                username=tweet_data.get("username", "user"),
-                display_name=tweet_data.get("display_name", "User"),
+            filepath = HelperFunctions.generate_tweet_screenshot(
+                username=username,
+                display_name=display_name,
                 tweet_text=tweet_data["tweet_text"],
                 verified=tweet_data.get("verified", False),
                 likes=tweet_data.get("likes", 0),
@@ -164,8 +186,13 @@ class Handler:
             
             # Create artifact
             artifact = Artifact(
-                name=f"twitter_screenshot_{image_id}.png",
-                file_url=image_url
+                name=f"twitter_screenshot_{username}.png",
+                parts=[
+                    ArtifactPart(
+                        kind="file",
+                        file_url=image_url
+                    )
+                ]
             )
             all_artifacts.append(artifact)
             
@@ -173,21 +200,32 @@ class Handler:
             response_message = A2AMessage(
                 role="agent",
                 parts=[
-                    MessagePart(kind="file", file_url=image_url)
+                    MessagePart(
+                        kind="text",
+                        text=f"Generated screenshot for @{username}"
+                    ),
+                    MessagePart(
+                        kind="file",
+                        file_url=image_url
+                    )
                 ],
-                taskId=message.taskId
+                taskId=task_id,
+                contextId=context_id
             )
             
             last_message = response_message
+            all_history.append(response_message)
         
         # Create task result
         task_result = TaskResult(
-            id=params.taskId or str(uuid.uuid4()),
+            id=task_id,
+            contextId=context_id,
             status=TaskStatus(
-                state="completed",
+                state="input-required",
                 message=last_message
             ),
-            artifacts=all_artifacts
+            artifacts=all_artifacts,
+            history=all_history
         )
         
         return JSONRPCResponse(

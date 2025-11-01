@@ -3,6 +3,11 @@ import os
 from fastapi.responses import FileResponse
 from src.handlers import Handler
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 # Import A2A models
 from src.schemas import (
     JSONRPCRequest,
@@ -45,17 +50,22 @@ async def get_image(image_id: str):
 @agent_router.post("/a2a")
 async def a2a_endpoint(request: JSONRPCRequest) -> JSONRPCResponse:
     """Main A2A JSON-RPC 2.0 endpoint"""
-
+    
+    logger.info(f"Received A2A request - Method: {request.method}, ID: {request.id}")
+    
     try:
         # Handle message/send method
         if request.method == "message/send":
+            logger.info("Handling message/send")
             return await Handler.handle_message_send(request)
 
         # Handle execute method
         elif request.method == "execute":
+            logger.info("Handling execute")
             return await Handler.handle_execute(request)
 
         else:
+            logger.warning(f"Method not found: {request.method}")
             return JSONRPCResponse(
                 id=request.id,
                 error={
@@ -65,6 +75,7 @@ async def a2a_endpoint(request: JSONRPCRequest) -> JSONRPCResponse:
             )
 
     except Exception as e:
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
         return JSONRPCResponse(
             id=request.id,
             error={"code": -32603, "message": f"Internal error: {str(e)}"},

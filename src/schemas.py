@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, Field
 from typing import Literal, Optional, List, Dict, Any
 from datetime import datetime
@@ -16,9 +15,9 @@ class A2AMessage(BaseModel):
     parts: List[MessagePart]
     messageId: str = Field(default_factory=lambda: str(uuid4()))
     taskId: Optional[str] = None
+    contextId: Optional[str] = None  # ✅ Add this
     metadata: Optional[Dict[str, Any]] = None
 
-# Simplified configuration without push notifications
 class MessageConfiguration(BaseModel):
     blocking: bool = True
     acceptedOutputModes: List[str] = ["text/plain", "image/png", "image/svg+xml"]
@@ -38,21 +37,31 @@ class JSONRPCRequest(BaseModel):
     method: Literal["message/send", "execute"]
     params: MessageParams | ExecuteParams
 
-# Simplified task status
+# ✅ Updated TaskStatus with timestamp
 class TaskStatus(BaseModel):
-    state: Literal["working", "completed", "failed"]
+    state: Literal["submitted", "working", "input-required", "completed", "failed", "canceled"]
+    timestamp: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
     message: Optional[A2AMessage] = None
 
-# Simplified artifact - just name and file URL
-class Artifact(BaseModel):
-    name: str
-    file_url: str
+# ✅ Updated Artifact with artifactId and parts structure
+class ArtifactPart(BaseModel):
+    kind: Literal["text", "file", "data"]
+    text: Optional[str] = None
+    file_url: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
-# Simplified task result
+class Artifact(BaseModel):
+    artifactId: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    parts: List[ArtifactPart]  # ✅ Changed from file_url to parts
+
+# ✅ Updated TaskResult with contextId and history
 class TaskResult(BaseModel):
     id: str
+    contextId: str  # ✅ Add this (required)
     status: TaskStatus
     artifacts: List[Artifact] = []
+    history: List[A2AMessage] = []  # ✅ Add this
     kind: Literal["task"] = "task"
 
 class JSONRPCResponse(BaseModel):
