@@ -44,23 +44,26 @@ class Handler:
         for part in message.parts:
             if part.kind == "text" and part.text:
                 user_text = part.text
-                parsed_data = HelperFunctions.parse_tweet_request(part.text)
-                tweet_data.update(parsed_data)
+                # ✅ Parse only if it looks like a real request (not HTML)
+                if not part.text.startswith("<"):  # Skip HTML content
+                    parsed_data = HelperFunctions.parse_tweet_request(part.text)
+                    if parsed_data:  # Only update if we got valid data
+                        tweet_data.update(parsed_data)
             
             elif part.kind == "data" and part.data:
                 if isinstance(part.data, dict):
                     tweet_data.update(part.data)
-        
-        # Validate required fields
-        if "tweet_text" not in tweet_data:
-            return JSONRPCResponse(
-                id=request.id,
-                error={
-                    "code": -32602,
-                    "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
-                }
-            )
-        
+                elif isinstance(part.data, list):
+                    # ✅ Get the LAST non-HTML text from conversation history
+                    for item in reversed(part.data):
+                        if isinstance(item, dict) and item.get("kind") == "text":
+                            text = item.get("text", "")
+                            # Skip HTML and bot responses
+                            if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating"]):
+                                parsed = HelperFunctions.parse_tweet_request(text)
+                                if parsed and "tweet_text" in parsed:
+                                    tweet_data.update(parsed)
+                                    break  # Use only the most recent valid request
         # Set defaults
         username = tweet_data.get("username", "user")
         display_name = tweet_data.get("display_name", username.title())

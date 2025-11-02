@@ -332,6 +332,17 @@ class HelperFunctions:
 
 
     def parse_tweet_request(text: str) -> dict:
+        """
+        Parse natural language request to extract tweet parameters.
+        
+        Supported patterns:
+        - "create a tweet for john saying hello world"
+        - "create a tweet saying hello world username john"
+        - "hello world for john" (short format)
+        - "generate a verified tweet for alice saying test"
+        - "tweet for bob saying hello with 100 likes"
+        - "saying hello world username ekene"
+        """
         result = {}
         text_lower = text.lower().strip()
         
@@ -360,7 +371,6 @@ class HelperFunctions:
         if views_match:
             result["views"] = HelperFunctions.parse_number(views_match.group(1))
         
-        # Now extract tweet text (everything between "saying" and "with" or end of string)
         # Pattern 1: "for <username> saying <tweet_text> [with ...]"
         pattern1 = r"(?:create|generate|make|tweet)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?for\s+@?(\w+)\s+saying\s+(.+?)(?:\s+with\s+|\s*$)"
         match = re.search(pattern1, text, re.IGNORECASE)
@@ -371,15 +381,35 @@ class HelperFunctions:
             result["tweet_text"] = match.group(2).strip()
             return result
         
-        # Pattern 2: "saying <tweet_text> [with ...]" without username
-        pattern2 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)(?:\s+with\s+|\s*$)"
+        # Pattern 2: "saying <tweet_text> username <name>" (username AFTER the text)
+        pattern2 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)\s+username\s+@?(\w+)(?:\s+with\s+|\s*$)"
         match = re.search(pattern2, text, re.IGNORECASE)
+        
+        if match:
+            result["tweet_text"] = match.group(1).strip()
+            result["username"] = match.group(2).lower()
+            result["display_name"] = match.group(2).title()
+            return result
+        
+        # Pattern 3: "hello world for <name>" (short format without "saying")
+        pattern3 = r"^(.+?)\s+for\s+(\w+)\s*$"
+        match = re.search(pattern3, text, re.IGNORECASE)
+        
+        if match:
+            result["tweet_text"] = match.group(1).strip()
+            result["username"] = match.group(2).lower()
+            result["display_name"] = match.group(2).title()
+            return result
+        
+        # Pattern 4: "saying <tweet_text> [with ...]" without username
+        pattern4 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)(?:\s+with\s+|\s*$)"
+        match = re.search(pattern4, text, re.IGNORECASE)
         
         if match:
             result["tweet_text"] = match.group(1).strip()
             return result
         
-        # Pattern 3: Direct tweet text (no "saying" keyword)
+        # Pattern 5: Direct tweet text (no "saying" keyword)
         # If text doesn't start with command words, treat it as direct tweet content
         command_words = ["create", "generate", "make", "tweet", "post", "verified"]
         starts_with_command = any(text_lower.startswith(word) for word in command_words)
@@ -388,10 +418,10 @@ class HelperFunctions:
             result["tweet_text"] = text.strip()
             return result
         
-        # Pattern 4: Just command words with text (fallback)
+        # Pattern 6: Just command words with text (fallback)
         # Matches: "create a tweet hello world", "make tweet test"
-        pattern4 = r"(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet\s+(.+?)(?:\s+with\s+|\s*$)"
-        match = re.search(pattern4, text, re.IGNORECASE)
+        pattern6 = r"(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet\s+(.+?)(?:\s+with\s+|\s*$)"
+        match = re.search(pattern6, text, re.IGNORECASE)
         
         if match:
             result["tweet_text"] = match.group(1).strip()
