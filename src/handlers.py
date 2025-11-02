@@ -50,6 +50,7 @@ class Handler:
             logger.error(f"❌ Failed to send webhook: {str(e)}")
 
 
+   
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle message/send requests"""
@@ -134,8 +135,8 @@ class Handler:
             
             # Store the IMAGE in Redis (different key from metadata)
             await redis_client.setex(
-                f"image:{image_id}",  # This is what /image/{image_id} endpoint looks for
-                86400,  # 24 hours
+                f"image:{image_id}",
+                86400,
                 image_base64
             )
             logger.info(f"✅ Stored image in Redis: image:{image_id}")
@@ -187,7 +188,7 @@ class Handler:
             id=task_id,
             contextId=context_id,
             status=TaskStatus(
-                state="input-required",
+                state="completed",  # ✅ Changed from "input-required" to "completed"
                 message=response_message
             ),
             artifacts=[artifact],
@@ -195,19 +196,48 @@ class Handler:
         )
         
         # ✅✅✅ WEBHOOK NOTIFICATION SUPPORT ✅✅✅
+        logger.info("🔍 Checking for webhook configuration...")
+        
         try:
             configuration = params.configuration
+            logger.info(f"Configuration blocking: {configuration.blocking}")
+            
             push_config = configuration.pushNotificationConfig
             
-            if push_config and push_config.get('url'):
-                webhook_url = push_config['url']
+            if push_config:
+                logger.info(f"✅ Push config found: {push_config}")
+                webhook_url = push_config.get('url')
                 token = push_config.get('token')
-                logger.info(f"📤 Sending webhook notification to: {webhook_url}")
                 
-                # Send webhook notification
-                await Handler.send_webhook_notification(webhook_url, task_result, token)
+                if webhook_url:
+                    logger.info(f"📤 Sending webhook notification to: {webhook_url}")
+                    
+                    # Import httpx here if not at top
+                    import httpx
+                    
+                    headers = {"Content-Type": "application/json"}
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                    
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "method": "task/update",
+                        "params": task_result.model_dump()
+                    }
+                    
+                    logger.info(f"Webhook payload: {json.dumps(payload, indent=2)}")
+                    
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(webhook_url, json=payload, headers=headers)
+                        logger.info(f"✅ Webhook sent - Status: {response.status_code}")
+                        logger.info(f"Webhook response: {response.text}")
+                else:
+                    logger.warning("⚠️ No webhook URL found in push config")
+            else:
+                logger.info("ℹ️ No push notification config (blocking mode)")
+                
         except Exception as e:
-            logger.error(f"❌ Webhook notification error: {str(e)}")
+            logger.error(f"❌ Webhook notification error: {str(e)}", exc_info=True)
         # ✅✅✅ END WEBHOOK SUPPORT ✅✅✅
         
         return JSONRPCResponse(
