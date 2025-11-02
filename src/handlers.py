@@ -1,8 +1,14 @@
 import os
 import json
+
+
 from src.dependencies import redis_client
 from src.utils import HelperFunctions
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 
 from src.schemas import (
@@ -42,7 +48,6 @@ class Handler:
                 tweet_data.update(parsed_data)
             
             elif part.kind == "data" and part.data:
-                # ✅ Only process if data is a dict
                 if isinstance(part.data, dict):
                     tweet_data.update(part.data)
         
@@ -55,8 +60,6 @@ class Handler:
                     "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
                 }
             )
-        
-        
         
         # Set defaults
         username = tweet_data.get("username", "user")
@@ -83,7 +86,31 @@ class Handler:
         image_id = os.path.basename(filepath)
         image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
         
-        # Store in Redis (24 hours)
+        # ✅✅✅ ADD THIS ENTIRE BLOCK HERE ✅✅✅
+        import base64
+        try:
+            # Read the generated image file
+            with open(filepath, "rb") as img_file:
+                image_bytes = img_file.read()
+                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            
+            # Store the IMAGE in Redis (different key from metadata)
+            await redis_client.setex(
+                f"image:{image_id}",  # This is what /image/{image_id} endpoint looks for
+                86400,  # 24 hours
+                image_base64
+            )
+            logger.info(f"✅ Stored image in Redis: image:{image_id}")
+            
+            # Clean up the temporary file from disk
+            os.remove(filepath)
+            logger.info(f"✅ Deleted temp file: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to store image in Redis: {str(e)}")
+        # ✅✅✅ END OF NEW BLOCK ✅✅✅
+        
+        # Store tweet METADATA in Redis (24 hours)
         await redis_client.setex(
             f"tweet:{image_id}",
             86400,
@@ -134,7 +161,6 @@ class Handler:
             id=request.id,
             result=task_result
         )
-
     @staticmethod
     async def handle_execute(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle execute requests (batch processing)"""
