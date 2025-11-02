@@ -1,13 +1,16 @@
 from fastapi import FastAPI, Depends, HTTPException, APIRouter, Query, status, Request as request
 import os
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from src.handlers import Handler
 import json
+import base64
 
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Import redis client
+from src.dependencies import redis_client  # Adjust this import based on where your redis_client is
 
 # Import A2A models
 from src.schemas import (
@@ -32,6 +35,44 @@ async def root():
         "status": "online",
         "protocol": "a2a-jsonrpc-2.0",
     }
+
+
+@agent_router.get("/image/{image_id}")
+async def get_image(image_id: str):
+    """Serve generated tweet images from Redis"""
+    
+    try:
+        logger.info(f"Fetching image: {image_id}")
+        
+        # Get image data from Redis
+        image_data = await redis_client.get(f"image:{image_id}")
+        
+        if not image_data:
+            logger.error(f"Image not found in Redis: {image_id}")
+            return JSONResponse(
+                status_code=404, 
+                content={"error": "Image not found"}
+            )
+        
+        # Decode base64 image data
+        image_bytes = base64.b64decode(image_data)
+        logger.info(f"✅ Image found and decoded: {image_id}")
+        
+        return Response(
+            content=image_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "Content-Disposition": f"inline; filename={image_id}"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error serving image {image_id}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to serve image: {str(e)}"}
+        )
 
 
 @agent_router.post("/a2a")
