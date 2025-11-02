@@ -1,6 +1,7 @@
 import os
 import json
-
+from typing import Optional
+import httpx
 
 from src.dependencies import redis_client
 from src.utils import HelperFunctions
@@ -26,6 +27,29 @@ from src.schemas import (
 
 
 class Handler:
+
+    async def send_webhook_notification(webhook_url: str, task_result: TaskResult, token: Optional[str] = None):
+        """Send task result to Telex webhook"""
+        
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "task/update",
+            "params": task_result.model_dump()
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(webhook_url, json=payload, headers=headers)
+                logger.info(f"✅ Webhook sent - Status: {response.status_code}")
+                logger.info(f"Webhook response: {response.text}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send webhook: {str(e)}")
+
+
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle message/send requests"""
@@ -64,6 +88,17 @@ class Handler:
                                 if parsed and "tweet_text" in parsed:
                                     tweet_data.update(parsed)
                                     break  # Use only the most recent valid request
+        
+        # Validate required fields
+        if "tweet_text" not in tweet_data:
+            return JSONRPCResponse(
+                id=request.id,
+                error={
+                    "code": -32602,
+                    "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
+                }
+            )
+        
         # Set defaults
         username = tweet_data.get("username", "user")
         display_name = tweet_data.get("display_name", username.title())
@@ -89,7 +124,7 @@ class Handler:
         image_id = os.path.basename(filepath)
         image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
         
-        # ✅✅✅ ADD THIS ENTIRE BLOCK HERE ✅✅✅
+        # Store image in Redis
         import base64
         try:
             # Read the generated image file
@@ -111,7 +146,6 @@ class Handler:
             
         except Exception as e:
             logger.error(f"❌ Failed to store image in Redis: {str(e)}")
-        # ✅✅✅ END OF NEW BLOCK ✅✅✅
         
         # Store tweet METADATA in Redis (24 hours)
         await redis_client.setex(
@@ -159,6 +193,22 @@ class Handler:
             artifacts=[artifact],
             history=[]
         )
+        
+        # ✅✅✅ WEBHOOK NOTIFICATION SUPPORT ✅✅✅
+        try:
+            configuration = params.configuration
+            push_config = configuration.pushNotificationConfig
+            
+            if push_config and push_config.get('url'):
+                webhook_url = push_config['url']
+                token = push_config.get('token')
+                logger.info(f"📤 Sending webhook notification to: {webhook_url}")
+                
+                # Send webhook notification
+                await Handler.send_webhook_notification(webhook_url, task_result, token)
+        except Exception as e:
+            logger.error(f"❌ Webhook notification error: {str(e)}")
+        # ✅✅✅ END WEBHOOK SUPPORT ✅✅✅
         
         return JSONRPCResponse(
             id=request.id,
