@@ -1,13 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any, Union
 from datetime import datetime
 from uuid import uuid4
 
 class MessagePart(BaseModel):
     kind: Literal["text", "data", "file"]
     text: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
+    data: Optional[Any] = None  # ✅ Changed from Dict to Any
     file_url: Optional[str] = None
+
 
 class A2AMessage(BaseModel):
     kind: Literal["message"] = "message"
@@ -21,6 +22,11 @@ class A2AMessage(BaseModel):
 class MessageConfiguration(BaseModel):
     blocking: bool = True
     acceptedOutputModes: List[str] = ["text/plain", "image/png", "image/svg+xml"]
+    historyLength: Optional[int] = None  # ✅ Added
+    pushNotificationConfig: Optional[Dict[str, Any]] = None  # ✅ Added
+
+
+
 
 class MessageParams(BaseModel):
     message: A2AMessage
@@ -31,11 +37,7 @@ class ExecuteParams(BaseModel):
     taskId: Optional[str] = None
     messages: List[A2AMessage]
 
-class JSONRPCRequest(BaseModel):
-    jsonrpc: Literal["2.0"]
-    id: str
-    method: Literal["message/send", "execute"]
-    params: MessageParams | ExecuteParams
+
 
 # ✅ Updated TaskStatus with timestamp
 class TaskStatus(BaseModel):
@@ -69,3 +71,9 @@ class JSONRPCResponse(BaseModel):
     id: str
     result: Optional[TaskResult] = None
     error: Optional[Dict[str, Any]] = None
+
+class JSONRPCRequest(BaseModel):
+    jsonrpc: Literal["2.0"]
+    id: str
+    method: Literal["message/send", "execute"]
+    params: Union[MessageParams, ExecuteParams]  

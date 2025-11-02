@@ -36,15 +36,14 @@ class Handler:
         user_text = ""
         
         for part in message.parts:
-            if part.kind == "text":
+            if part.kind == "text" and part.text:
                 user_text = part.text
-                # Parse natural language using regex
                 parsed_data = HelperFunctions.parse_tweet_request(part.text)
                 tweet_data.update(parsed_data)
             
-            elif part.kind == "data":
-                # Structured data takes precedence over parsed data
-                if part.data:
+            elif part.kind == "data" and part.data:
+                # ✅ Only process if data is a dict
+                if isinstance(part.data, dict):
                     tweet_data.update(part.data)
         
         # Validate required fields
@@ -56,6 +55,8 @@ class Handler:
                     "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
                 }
             )
+        
+        
         
         # Set defaults
         username = tweet_data.get("username", "user")
