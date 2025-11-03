@@ -29,11 +29,30 @@ agent_router = APIRouter()
 @agent_router.get("/")
 async def root():
     """Health check"""
-    return {
+    logger.info("Health check endpoint called")
+    
+    response = {
         "agent_name": os.getenv("AGENT_NAME"),
         "agent_id": os.getenv("AGENT_ID"),
         "status": "online",
         "protocol": "a2a-jsonrpc-2.0",
+    }
+    
+    logger.info(f"Health check response: {response}")
+    return response
+
+@agent_router.get("/test-logging")
+async def test_logging():
+    """Test endpoint to verify logging is working"""
+    logger.debug("DEBUG level log message")
+    logger.info("INFO level log message")
+    logger.warning("WARNING level log message")
+    logger.error("ERROR level log message")
+    
+    return {
+        "message": "Logging test completed - check your console and logs/app.log file",
+        "timestamp": "Check logs for timestamp",
+        "levels_tested": ["DEBUG", "INFO", "WARNING", "ERROR"]
     }
 
 
@@ -50,13 +69,13 @@ async def get_image(image_id: str):
         if not image_data:
             logger.error(f"Image not found in Redis: {image_id}")
             return JSONResponse(
-                status_code=404, 
+                status_code=404,
                 content={"error": "Image not found"}
             )
         
         # Decode base64 image data
         image_bytes = base64.b64decode(image_data)
-        logger.info(f"✅ Image found and decoded: {image_id}")
+        logger.info(f"Image found and decoded: {image_id}")
         
         return Response(
             content=image_bytes,
@@ -102,7 +121,7 @@ async def a2a_endpoint(raw_request: request):
     # Try to validate with Pydantic
     try:
         request = JSONRPCRequest(**json_body)
-        logger.info(f"✅ Pydantic validation SUCCESS")
+        logger.info("Pydantic validation SUCCESS")
         
         # Handle message/send method
         if request.method == "message/send":
@@ -131,7 +150,7 @@ async def a2a_endpoint(raw_request: request):
             )
 
     except Exception as e:
-        logger.error(f"❌ Pydantic validation FAILED: {str(e)}", exc_info=True)
+        logger.error(f"Pydantic validation FAILED: {str(e)}", exc_info=True)
         logger.error(f"Request body structure: {json.dumps(json_body, indent=2)}")
         
         # Return a valid error response

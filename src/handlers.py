@@ -39,10 +39,10 @@ async def send_webhook_notification(webhook_url: str, task_result: TaskResult, t
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(webhook_url, json=payload, headers=headers)
-            logger.info(f"✅ Webhook sent successfully - Status: {response.status_code}")
+            logger.info(f"Webhook sent successfully - Status: {response.status_code}")
             logger.info(f"Webhook response: {response.text}")
     except Exception as e:
-        logger.error(f"❌ Failed to send webhook: {str(e)}", exc_info=True)
+        logger.error(f"Failed to send webhook: {str(e)}", exc_info=True)
 
 
 class Handler:
@@ -135,14 +135,14 @@ class Handler:
                 86400,
                 image_base64
             )
-            logger.info(f"✅ Stored image in Redis: image:{image_id}")
+            logger.info(f"Stored image in Redis: image:{image_id}")
             
             # Clean up the temporary file from disk
             os.remove(filepath)
-            logger.info(f"✅ Deleted temp file: {filepath}")
+            logger.info(f"Deleted temp file: {filepath}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to store image in Redis: {str(e)}")
+            logger.error(f"Failed to store image in Redis: {str(e)}")
         
         # Store tweet METADATA in Redis (24 hours)
         await redis_client.setex(
@@ -192,8 +192,8 @@ class Handler:
             history=[]
         )
         
-        # ✅✅✅ WEBHOOK NOTIFICATION SUPPORT ✅✅✅
-        logger.info("🔍 Checking for webhook configuration...")
+        # WEBHOOK NOTIFICATION SUPPORT
+        logger.info("Checking for webhook configuration...")
         
         try:
             configuration = params.configuration
@@ -202,22 +202,22 @@ class Handler:
             push_config = configuration.pushNotificationConfig
             
             if push_config:
-                logger.info(f"✅ Push config found")
+                logger.info("Push config found")
                 webhook_url = push_config.get('url')
                 token = push_config.get('token')
                 
                 if webhook_url:
-                    logger.info(f"📤 Calling webhook function...")
-                    # ✅ Call the function that's now outside the class
+                    logger.info("Calling webhook function...")
+                    # Call the function that's now outside the class
                     await send_webhook_notification(webhook_url, task_result, token)
                 else:
-                    logger.warning("⚠️ No webhook URL found in push config")
+                    logger.warning("No webhook URL found in push config")
             else:
-                logger.info("ℹ️ No push notification config (blocking mode)")
+                logger.info("No push notification config (blocking mode)")
                 
         except Exception as e:
-            logger.error(f"❌ Webhook notification error: {str(e)}", exc_info=True)
-        # ✅✅✅ END WEBHOOK SUPPORT ✅✅✅
+            logger.error(f"Webhook notification error: {str(e)}", exc_info=True)
+        # END WEBHOOK SUPPORT
         
         return JSONRPCResponse(
             id=request.id,
