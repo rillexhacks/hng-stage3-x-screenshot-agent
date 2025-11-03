@@ -10,8 +10,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-
 from src.schemas import (
     ArtifactPart,
     JSONRPCRequest,
@@ -24,32 +22,30 @@ from src.schemas import (
 )
 
 
+# ✅ Move this OUTSIDE the class
+async def send_webhook_notification(webhook_url: str, task_result: TaskResult, token: Optional[str] = None):
+    """Send task result to Telex webhook"""
+    
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "task/update",
+        "params": task_result.model_dump()
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload, headers=headers)
+            logger.info(f"✅ Webhook sent successfully - Status: {response.status_code}")
+            logger.info(f"Webhook response: {response.text}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send webhook: {str(e)}", exc_info=True)
 
 
 class Handler:
-
-    async def send_webhook_notification(webhook_url: str, task_result: TaskResult, token: Optional[str] = None):
-        """Send task result to Telex webhook"""
-        
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "task/update",
-            "params": task_result.model_dump()
-        }
-        
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(webhook_url, json=payload, headers=headers)
-                logger.info(f"✅ Webhook sent - Status: {response.status_code}")
-                logger.info(f"Webhook response: {response.text}")
-        except Exception as e:
-            logger.error(f"❌ Failed to send webhook: {str(e)}")
-
-
    
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
@@ -188,7 +184,7 @@ class Handler:
             id=task_id,
             contextId=context_id,
             status=TaskStatus(
-                state="completed",  # ✅ Changed from "input-required" to "completed"
+                state="completed",
                 message=response_message
             ),
             artifacts=[artifact],
@@ -205,32 +201,14 @@ class Handler:
             push_config = configuration.pushNotificationConfig
             
             if push_config:
-                logger.info(f"✅ Push config found: {push_config}")
+                logger.info(f"✅ Push config found")
                 webhook_url = push_config.get('url')
                 token = push_config.get('token')
                 
                 if webhook_url:
-                    logger.info(f"📤 Sending webhook notification to: {webhook_url}")
-                    
-                    # Import httpx here if not at top
-                    import httpx
-                    
-                    headers = {"Content-Type": "application/json"}
-                    if token:
-                        headers["Authorization"] = f"Bearer {token}"
-                    
-                    payload = {
-                        "jsonrpc": "2.0",
-                        "method": "task/update",
-                        "params": task_result.model_dump()
-                    }
-                    
-                    logger.info(f"Webhook payload: {json.dumps(payload, indent=2)}")
-                    
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        response = await client.post(webhook_url, json=payload, headers=headers)
-                        logger.info(f"✅ Webhook sent - Status: {response.status_code}")
-                        logger.info(f"Webhook response: {response.text}")
+                    logger.info(f"📤 Calling webhook function...")
+                    # ✅ Call the function that's now outside the class
+                    await send_webhook_notification(webhook_url, task_result, token)
                 else:
                     logger.warning("⚠️ No webhook URL found in push config")
             else:
@@ -244,6 +222,7 @@ class Handler:
             id=request.id,
             result=task_result
         )
+    
     @staticmethod
     async def handle_execute(request: JSONRPCRequest) -> JSONRPCResponse:
         """Handle execute requests (batch processing)"""
@@ -331,7 +310,7 @@ class Handler:
             id=task_id,
             contextId=context_id,
             status=TaskStatus(
-                state="input-required",
+                state="completed",
                 message=last_message
             ),
             artifacts=all_artifacts,
