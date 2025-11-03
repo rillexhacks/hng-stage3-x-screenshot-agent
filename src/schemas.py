@@ -55,7 +55,8 @@ class ArtifactPart(BaseModel):
 class Artifact(BaseModel):
     artifactId: str = Field(default_factory=lambda: str(uuid4()))
     name: str
-    parts: List[ArtifactPart]  # ✅ Changed from file_url to parts
+    mimeType: Optional[str] = None  
+    parts: List[ArtifactPart]
 
 # ✅ Updated TaskResult with contextId and history
 class TaskResult(BaseModel):

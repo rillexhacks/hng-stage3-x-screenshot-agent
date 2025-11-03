@@ -171,13 +171,14 @@ class Handler:
         # Create artifact
         artifact = Artifact(
             name=f"twitter_screenshot_{username}.png",
+            mimeType="image/png", # ✅ ADD THIS LINE
             parts=[
                 ArtifactPart(
                     kind="file",
                     file_url=image_url
                 )
             ]
-        )
+        ) 
         
         # Create task result
         task_result = TaskResult(
