@@ -26,58 +26,50 @@ class Handler:
    
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
-        """Handle message/send requests"""
-        
+        """Handle message/send requests (fixed latest-text extraction)."""
         params = request.params
         message = params.message
-        
-        # Get or generate contextId
+
+        # Generate context/task IDs
         context_id = message.contextId or str(uuid.uuid4())
         task_id = message.taskId or str(uuid.uuid4())
-        
-        # Extract tweet data from message parts
+
+        # Helper to get the newest meaningful text
+        def latest_text(parts):
+            """Return the latest valid text from message parts."""
+            if not parts:
+                return ""
+            for part in reversed(parts):
+                if not isinstance(part, dict):
+                    continue
+                # Direct text
+                if part.get("kind") == "text" and part.get("text"):
+                    txt = part["text"].strip()
+                    if txt and not txt.startswith("<"):
+                        return txt
+                # Nested data list
+                if part.get("kind") == "data" and isinstance(part.get("data"), list):
+                    for item in reversed(part["data"]):
+                        if isinstance(item, dict):
+                            txt = item.get("text", "").strip()
+                            if txt and not txt.startswith("<"):
+                                return txt
+            return ""
+
+        # ---- Extract latest command ----
+        latest_user_text = latest_text(message.parts) or ""
         tweet_data = {}
-        user_text = ""
-        
-        # First pass: get the main text request
-        for part in message.parts:
-            if part.kind == "text" and part.text:
-                user_text = part.text
-                if not part.text.startswith("<"):
-                    # Split by tweet command keywords to separate multiple requests
-                    # This regex splits on "create/generate/make ... tweet"
-                    split_pattern = r'(?=(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet)'
-                    segments = re.split(split_pattern, part.text, flags=re.IGNORECASE)
-                    
-                    # Filter out empty segments and get the last one (most recent request)
-                    segments = [s.strip() for s in segments if s.strip()]
-                    
-                    if segments:
-                        # Parse the last segment (current request)
-                        last_request = segments[-1]
-                        parsed_data = HelperFunctions.parse_tweet_request(last_request)
-                        if parsed_data and "tweet_text" in parsed_data:
-                            tweet_data = parsed_data
-                            break
-        
-        # Second pass: only check data history if we have no tweet_text yet
-        if "tweet_text" not in tweet_data:
-            for part in message.parts:
-                if part.kind == "data" and part.data:
-                    if isinstance(part.data, list):
-                        # Get the last non-HTML text from data array
-                        for item in reversed(part.data):
-                            if isinstance(item, dict) and item.get("kind") == "text":
-                                text = item.get("text", "")
-                                if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating", "screenshot"]):
-                                    parsed = HelperFunctions.parse_tweet_request(text)
-                                    if parsed and "tweet_text" in parsed:
-                                        tweet_data = parsed
-                                        break
-                        if "tweet_text" in tweet_data:
-                            break
-        
-        # Validate required fields
+        if latest_user_text:
+            # Split by known tweet creation keywords (keep latest)
+            split_pattern = r'(?=(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet)'
+            segments = re.split(split_pattern, latest_user_text, flags=re.IGNORECASE)
+            segments = [s.strip() for s in segments if s.strip()]
+            if segments:
+                parsed_data = HelperFunctions.parse_tweet_request(segments[-1])
+                if parsed_data and "tweet_text" in parsed_data:
+                    tweet_data = parsed_data
+
+        # ---- Validate ----
         if "tweet_text" not in tweet_data:
             return JSONRPCResponse(
                 id=request.id,
@@ -86,8 +78,8 @@ class Handler:
                     "message": "Missing tweet content. Try: 'create a tweet for john saying hello world'"
                 }
             )
-        
-        # Set defaults
+
+        # ---- Prepare data ----
         username = tweet_data.get("username", "user")
         display_name = tweet_data.get("display_name", username.title())
         tweet_text = tweet_data["tweet_text"]
@@ -96,8 +88,8 @@ class Handler:
         retweets = tweet_data.get("retweets", 0)
         replies = tweet_data.get("replies", 0)
         timestamp = tweet_data.get("timestamp", None)
-        
-        # Generate screenshot
+
+        # ---- Generate screenshot ----
         filepath = HelperFunctions.generate_tweet_screenshot(
             username=username,
             display_name=display_name,
@@ -108,38 +100,34 @@ class Handler:
             replies=replies,
             timestamp=timestamp
         )
-        
+
         image_id = os.path.basename(filepath)
         image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
-        
-        # Store image in Redis
+
+        # ---- Store image in Redis ----
         import base64
         try:
             with open(filepath, "rb") as img_file:
                 image_bytes = img_file.read()
-                image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-            
-            await redis_client.setex(
-                f"image:{image_id}",
-                86400,
-                image_base64
-            )
+                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            await redis_client.setex(f"image:{image_id}", 86400, image_base64)
             logger.info(f"Stored image in Redis: image:{image_id}")
-            
+
             os.remove(filepath)
             logger.info(f"Deleted temp file: {filepath}")
-            
+
         except Exception as e:
             logger.error(f"Failed to store image in Redis: {str(e)}")
-        
-        # Store tweet metadata
+
+        # ---- Store tweet metadata ----
         await redis_client.setex(
             f"tweet:{image_id}",
             86400,
             json.dumps(tweet_data)
         )
-        
-        # Create response message - TEXT ONLY with embedded image
+
+        # ---- Create A2A response ----
         response_message = A2AMessage(
             role="agent",
             parts=[
@@ -151,8 +139,7 @@ class Handler:
             taskId=task_id,
             contextId=context_id
         )
-        
-        # Create artifact - TEXT ONLY with embedded image
+
         artifact = Artifact(
             name=f"twitter_screenshot_{username}.png",
             mimeType="image/png",
@@ -163,23 +150,17 @@ class Handler:
                 )
             ]
         )
-        
-        # Create task result
+
         task_result = TaskResult(
             id=task_id,
             contextId=context_id,
-            status=TaskStatus(
-                state="completed",
-                message=response_message
-            ),
+            status=TaskStatus(state="completed", message=response_message),
             artifacts=[artifact],
             history=[]
         )
-        
-        return JSONRPCResponse(
-            id=request.id,
-            result=task_result
-        )
+
+        return JSONRPCResponse(id=request.id, result=task_result)
+
     
     @staticmethod
     async def handle_execute(request: JSONRPCRequest) -> JSONRPCResponse:
