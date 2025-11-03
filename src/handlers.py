@@ -22,26 +22,6 @@ from src.schemas import (
 )
 
 
-# FIXED webhook function - send TaskResult directly without JSON-RPC wrapper
-async def send_webhook_notification(webhook_url: str, task_result: TaskResult, token: Optional[str] = None):
-    """Send task result to Telex webhook"""
-    
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    
-    # Send TaskResult directly, no JSON-RPC wrapper
-    payload = task_result.model_dump()
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(webhook_url, json=payload, headers=headers)
-            logger.info(f"Webhook sent successfully - Status: {response.status_code}")
-            logger.info(f"Webhook response: {response.text}")
-    except Exception as e:
-        logger.error(f"Failed to send webhook: {str(e)}", exc_info=True)
-
-
 class Handler:
    
     @staticmethod
@@ -142,31 +122,27 @@ class Handler:
             json.dumps(tweet_data)
         )
         
-        # Create response message
+        # Create response message - TEXT ONLY with embedded image
         response_message = A2AMessage(
             role="agent",
             parts=[
                 MessagePart(
                     kind="text",
-                    text=f"Generated Twitter screenshot for @{username}"
-                ),
-                MessagePart(
-                    kind="file",
-                    file_url=image_url
+                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ],
             taskId=task_id,
             contextId=context_id
         )
         
-        # Create artifact
+        # Create artifact - TEXT ONLY with embedded image
         artifact = Artifact(
             name=f"twitter_screenshot_{username}.png",
             mimeType="image/png",
             parts=[
                 ArtifactPart(
-                    kind="file",
-                    file_url=image_url
+                    kind="text",
+                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ]
         )
@@ -182,31 +158,6 @@ class Handler:
             artifacts=[artifact],
             history=[]
         )
-        
-        # WEBHOOK NOTIFICATION SUPPORT
-        logger.info("Checking for webhook configuration...")
-        
-        try:
-            configuration = params.configuration
-            logger.info(f"Configuration blocking: {configuration.blocking}")
-            
-            push_config = configuration.pushNotificationConfig
-            
-            if push_config:
-                logger.info("Push config found")
-                webhook_url = push_config.get('url')
-                token = push_config.get('token')
-                
-                if webhook_url:
-                    logger.info("Calling webhook function...")
-                    await send_webhook_notification(webhook_url, task_result, token)
-                else:
-                    logger.warning("No webhook URL found in push config")
-            else:
-                logger.info("No push notification config (blocking mode)")
-                
-        except Exception as e:
-            logger.error(f"Webhook notification error: {str(e)}", exc_info=True)
         
         return JSONRPCResponse(
             id=request.id,
@@ -257,28 +208,26 @@ class Handler:
             image_id = os.path.basename(filepath)
             image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
             
+            # TEXT ONLY artifact
             artifact = Artifact(
                 name=f"twitter_screenshot_{username}.png",
                 mimeType="image/png",
                 parts=[
                     ArtifactPart(
-                        kind="file",
-                        file_url=image_url
+                        kind="text",
+                        text=f"Generated screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                     )
                 ]
             )
             all_artifacts.append(artifact)
             
+            # TEXT ONLY message
             response_message = A2AMessage(
                 role="agent",
                 parts=[
                     MessagePart(
                         kind="text",
-                        text=f"Generated screenshot for @{username}"
-                    ),
-                    MessagePart(
-                        kind="file",
-                        file_url=image_url
+                        text=f"Generated screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                     )
                 ],
                 taskId=task_id,
