@@ -333,6 +333,7 @@ class HelperFunctions:
 
     def parse_tweet_request(text: str) -> dict:
         """
+        
         Parse natural language request to extract tweet parameters.
         
         Supported patterns:
@@ -341,7 +342,8 @@ class HelperFunctions:
         - "hello world for john" (short format)
         - "generate a verified tweet for alice saying test"
         - "tweet for bob saying hello with 100 likes"
-        - "saying hello world username ekene"
+        - "saying hello world username ekene ogukwe"
+        - "for ekene ogukwe saying hello world"
         """
         result = {}
         text_lower = text.lower().strip()
@@ -372,33 +374,39 @@ class HelperFunctions:
             result["views"] = HelperFunctions.parse_number(views_match.group(1))
         
         # Pattern 1: "for <username> saying <tweet_text> [with ...]"
-        pattern1 = r"(?:create|generate|make|tweet)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?for\s+@?(\w+)\s+saying\s+(.+?)(?:\s+with\s+|\s*$)"
+        # Updated to handle multi-word usernames
+        pattern1 = r"(?:create|generate|make|tweet)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?for\s+@?([\w\s]+?)\s+saying\s+(.+?)(?:\s+with\s+|\s+username\s+|\s*$)"
         match = re.search(pattern1, text, re.IGNORECASE)
         
         if match:
-            result["username"] = match.group(1).lower()
-            result["display_name"] = match.group(1).title()
+            username_full = match.group(1).strip()
+            result["username"] = username_full.replace(" ", "_").lower()
+            result["display_name"] = username_full.title()
             result["tweet_text"] = match.group(2).strip()
             return result
         
         # Pattern 2: "saying <tweet_text> username <name>" (username AFTER the text)
-        pattern2 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)\s+username\s+@?(\w+)(?:\s+with\s+|\s*$)"
+        # Updated to handle multi-word usernames
+        pattern2 = r"(?:create|generate|make)?\s*(?:a\s+)?(?:verified\s+)?(?:tweet\s+)?saying\s+(.+?)\s+username\s+@?([\w\s]+?)(?:\s+with\s+|\s*$)"
         match = re.search(pattern2, text, re.IGNORECASE)
         
         if match:
             result["tweet_text"] = match.group(1).strip()
-            result["username"] = match.group(2).lower()
-            result["display_name"] = match.group(2).title()
+            username_full = match.group(2).strip()
+            result["username"] = username_full.replace(" ", "_").lower()
+            result["display_name"] = username_full.title()
             return result
         
         # Pattern 3: "hello world for <name>" (short format without "saying")
-        pattern3 = r"^(.+?)\s+for\s+(\w+)\s*$"
+        # Updated to handle multi-word names
+        pattern3 = r"^(.+?)\s+for\s+([\w\s]+?)\s*$"
         match = re.search(pattern3, text, re.IGNORECASE)
         
         if match:
             result["tweet_text"] = match.group(1).strip()
-            result["username"] = match.group(2).lower()
-            result["display_name"] = match.group(2).title()
+            username_full = match.group(2).strip()
+            result["username"] = username_full.replace(" ", "_").lower()
+            result["display_name"] = username_full.title()
             return result
         
         # Pattern 4: "saying <tweet_text> [with ...]" without username

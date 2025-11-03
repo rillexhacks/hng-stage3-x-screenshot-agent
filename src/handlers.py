@@ -39,26 +39,33 @@ class Handler:
         tweet_data = {}
         user_text = ""
         
+        # First pass: get the main text request (prioritize this)
         for part in message.parts:
             if part.kind == "text" and part.text:
                 user_text = part.text
                 if not part.text.startswith("<"):
                     parsed_data = HelperFunctions.parse_tweet_request(part.text)
-                    if parsed_data:
-                        tweet_data.update(parsed_data)
-            
-            elif part.kind == "data" and part.data:
-                if isinstance(part.data, dict):
-                    tweet_data.update(part.data)
-                elif isinstance(part.data, list):
-                    for item in reversed(part.data):
-                        if isinstance(item, dict) and item.get("kind") == "text":
-                            text = item.get("text", "")
-                            if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating"]):
-                                parsed = HelperFunctions.parse_tweet_request(text)
-                                if parsed and "tweet_text" in parsed:
-                                    tweet_data.update(parsed)
-                                    break
+                    if parsed_data and "tweet_text" in parsed_data:
+                        tweet_data = parsed_data  # Use assignment, not update
+                        break  # Stop after first valid parse
+        
+        # Second pass: only check data history if we have no tweet_text yet
+        if "tweet_text" not in tweet_data:
+            for part in message.parts:
+                if part.kind == "data" and part.data:
+                    if isinstance(part.data, dict):
+                        tweet_data.update(part.data)
+                    elif isinstance(part.data, list):
+                        for item in reversed(part.data):
+                            if isinstance(item, dict) and item.get("kind") == "text":
+                                text = item.get("text", "")
+                                if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating"]):
+                                    parsed = HelperFunctions.parse_tweet_request(text)
+                                    if parsed and "tweet_text" in parsed:
+                                        tweet_data.update(parsed)
+                                        break
+                        if "tweet_text" in tweet_data:
+                            break
         
         # Validate required fields
         if "tweet_text" not in tweet_data:
