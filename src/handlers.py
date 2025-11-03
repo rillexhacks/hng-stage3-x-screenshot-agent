@@ -22,7 +22,7 @@ from src.schemas import (
 )
 
 
-# ✅ Move this OUTSIDE the class
+# FIXED webhook function - send TaskResult directly without JSON-RPC wrapper
 async def send_webhook_notification(webhook_url: str, task_result: TaskResult, token: Optional[str] = None):
     """Send task result to Telex webhook"""
     
@@ -30,11 +30,8 @@ async def send_webhook_notification(webhook_url: str, task_result: TaskResult, t
     if token:
         headers["Authorization"] = f"Bearer {token}"
     
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "task/update",
-        "params": task_result.model_dump()
-    }
+    # Send TaskResult directly, no JSON-RPC wrapper
+    payload = task_result.model_dump()
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -65,26 +62,23 @@ class Handler:
         for part in message.parts:
             if part.kind == "text" and part.text:
                 user_text = part.text
-                # ✅ Parse only if it looks like a real request (not HTML)
-                if not part.text.startswith("<"):  # Skip HTML content
+                if not part.text.startswith("<"):
                     parsed_data = HelperFunctions.parse_tweet_request(part.text)
-                    if parsed_data:  # Only update if we got valid data
+                    if parsed_data:
                         tweet_data.update(parsed_data)
             
             elif part.kind == "data" and part.data:
                 if isinstance(part.data, dict):
                     tweet_data.update(part.data)
                 elif isinstance(part.data, list):
-                    # ✅ Get the LAST non-HTML text from conversation history
                     for item in reversed(part.data):
                         if isinstance(item, dict) and item.get("kind") == "text":
                             text = item.get("text", "")
-                            # Skip HTML and bot responses
                             if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating"]):
                                 parsed = HelperFunctions.parse_tweet_request(text)
                                 if parsed and "tweet_text" in parsed:
                                     tweet_data.update(parsed)
-                                    break  # Use only the most recent valid request
+                                    break
         
         # Validate required fields
         if "tweet_text" not in tweet_data:
@@ -124,12 +118,10 @@ class Handler:
         # Store image in Redis
         import base64
         try:
-            # Read the generated image file
             with open(filepath, "rb") as img_file:
                 image_bytes = img_file.read()
                 image_base64 = base64.b64encode(image_bytes).decode('utf-8')
             
-            # Store the IMAGE in Redis (different key from metadata)
             await redis_client.setex(
                 f"image:{image_id}",
                 86400,
@@ -137,14 +129,13 @@ class Handler:
             )
             logger.info(f"Stored image in Redis: image:{image_id}")
             
-            # Clean up the temporary file from disk
             os.remove(filepath)
             logger.info(f"Deleted temp file: {filepath}")
             
         except Exception as e:
             logger.error(f"Failed to store image in Redis: {str(e)}")
         
-        # Store tweet METADATA in Redis (24 hours)
+        # Store tweet metadata
         await redis_client.setex(
             f"tweet:{image_id}",
             86400,
@@ -171,14 +162,14 @@ class Handler:
         # Create artifact
         artifact = Artifact(
             name=f"twitter_screenshot_{username}.png",
-            mimeType="image/png", # ✅ ADD THIS LINE
+            mimeType="image/png",
             parts=[
                 ArtifactPart(
                     kind="file",
                     file_url=image_url
                 )
             ]
-        ) 
+        )
         
         # Create task result
         task_result = TaskResult(
@@ -208,7 +199,6 @@ class Handler:
                 
                 if webhook_url:
                     logger.info("Calling webhook function...")
-                    # Call the function that's now outside the class
                     await send_webhook_notification(webhook_url, task_result, token)
                 else:
                     logger.warning("No webhook URL found in push config")
@@ -217,7 +207,6 @@ class Handler:
                 
         except Exception as e:
             logger.error(f"Webhook notification error: {str(e)}", exc_info=True)
-        # END WEBHOOK SUPPORT
         
         return JSONRPCResponse(
             id=request.id,
@@ -231,22 +220,18 @@ class Handler:
         params = request.params
         messages = params.messages
         
-        # Get or generate contextId
         context_id = params.contextId or str(uuid.uuid4())
         task_id = params.taskId or str(uuid.uuid4())
         
-        # Process all messages
         all_artifacts = []
         all_history = []
         last_message = None
         
         for message in messages:
-            # Extract tweet data
             tweet_data = {}
             
             for part in message.parts:
                 if part.kind == "text":
-                    # Parse natural language
                     parsed_data = HelperFunctions.parse_tweet_request(part.text)
                     tweet_data.update(parsed_data)
                 elif part.kind == "data" and part.data:
@@ -255,11 +240,9 @@ class Handler:
             if "tweet_text" not in tweet_data:
                 continue
             
-            # Set defaults
             username = tweet_data.get("username", "user")
             display_name = tweet_data.get("display_name", username.title())
             
-            # Generate screenshot
             filepath = HelperFunctions.generate_tweet_screenshot(
                 username=username,
                 display_name=display_name,
@@ -274,9 +257,9 @@ class Handler:
             image_id = os.path.basename(filepath)
             image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
             
-            # Create artifact
             artifact = Artifact(
                 name=f"twitter_screenshot_{username}.png",
+                mimeType="image/png",
                 parts=[
                     ArtifactPart(
                         kind="file",
@@ -286,7 +269,6 @@ class Handler:
             )
             all_artifacts.append(artifact)
             
-            # Create response message
             response_message = A2AMessage(
                 role="agent",
                 parts=[
@@ -306,7 +288,6 @@ class Handler:
             last_message = response_message
             all_history.append(response_message)
         
-        # Create task result
         task_result = TaskResult(
             id=task_id,
             contextId=context_id,
