@@ -39,30 +39,40 @@ class Handler:
         tweet_data = {}
         user_text = ""
         
-        # First pass: get the main text request (prioritize this)
+        # First pass: get the main text request
         for part in message.parts:
             if part.kind == "text" and part.text:
                 user_text = part.text
                 if not part.text.startswith("<"):
-                    parsed_data = HelperFunctions.parse_tweet_request(part.text)
-                    if parsed_data and "tweet_text" in parsed_data:
-                        tweet_data = parsed_data  # Use assignment, not update
-                        break  # Stop after first valid parse
+                    # Split by tweet command keywords to separate multiple requests
+                    # This regex splits on "create/generate/make ... tweet"
+                    split_pattern = r'(?=(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet)'
+                    segments = re.split(split_pattern, part.text, flags=re.IGNORECASE)
+                    
+                    # Filter out empty segments and get the last one (most recent request)
+                    segments = [s.strip() for s in segments if s.strip()]
+                    
+                    if segments:
+                        # Parse the last segment (current request)
+                        last_request = segments[-1]
+                        parsed_data = HelperFunctions.parse_tweet_request(last_request)
+                        if parsed_data and "tweet_text" in parsed_data:
+                            tweet_data = parsed_data
+                            break
         
         # Second pass: only check data history if we have no tweet_text yet
         if "tweet_text" not in tweet_data:
             for part in message.parts:
                 if part.kind == "data" and part.data:
-                    if isinstance(part.data, dict):
-                        tweet_data.update(part.data)
-                    elif isinstance(part.data, list):
+                    if isinstance(part.data, list):
+                        # Get the last non-HTML text from data array
                         for item in reversed(part.data):
                             if isinstance(item, dict) and item.get("kind") == "text":
                                 text = item.get("text", "")
-                                if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating"]):
+                                if not text.startswith("<") and not any(skip in text.lower() for skip in ["generating", "creating", "screenshot"]):
                                     parsed = HelperFunctions.parse_tweet_request(text)
                                     if parsed and "tweet_text" in parsed:
-                                        tweet_data.update(parsed)
+                                        tweet_data = parsed
                                         break
                         if "tweet_text" in tweet_data:
                             break
