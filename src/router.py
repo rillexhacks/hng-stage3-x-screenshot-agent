@@ -80,7 +80,7 @@ async def get_image(image_id: str):
         )
 
 
-@agent_router.post("/a2a")
+@agent_router.post("/a2a/twitter-screenshot")
 async def a2a_endpoint(raw_request: request):
     """Main A2A JSON-RPC 2.0 endpoint - with debug logging"""
     
