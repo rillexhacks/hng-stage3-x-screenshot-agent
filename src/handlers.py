@@ -129,6 +129,7 @@ class Handler:
         # ---- Extract latest command ----
         # Defensive: message.parts might be missing or None
         parts_val = getattr(message, "parts", None) or message.get("parts") if isinstance(message, dict) else None
+      
         # If parts_val not present, try other likely places (fallback)
         if not parts_val:
             # some Telex shapes might put text directly under message.text or message.data
@@ -139,6 +140,7 @@ class Handler:
             else:
                 parts_val = []
 
+        logger.info(f" DEBUG parts_val type: {type(parts_val)}, value: {parts_val!r}")
         latest_user_text = latest_text(parts_val) or ""
         logger.info(f"🧩 Extracted latest_user_text (raw): {latest_user_text!r}")
 
