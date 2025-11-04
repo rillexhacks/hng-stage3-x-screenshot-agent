@@ -26,7 +26,7 @@ class Handler:
    
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
-        """Handle message/send requests (fixed latest-text extraction)."""
+        """Handle message/send requests (fixed latest-text extraction for Telex format)."""
         params = request.params
         message = params.message
 
@@ -34,26 +34,57 @@ class Handler:
         context_id = message.contextId or str(uuid.uuid4())
         task_id = message.taskId or str(uuid.uuid4())
 
-        # Helper to get the newest meaningful text
+        # ---- Robust latest_text() ----
         def latest_text(parts):
-            """Return the latest valid text from message parts."""
+            """Extract the newest valid tweet command from possibly nested message parts."""
+
+            def is_noise(txt: str) -> bool:
+                """Return True if text is a Telex system/status message."""
+                lower = txt.lower()
+                return any(kw in lower for kw in [
+                    "generating the tweet",
+                    "creating the tweet",
+                    "generated twitter screenshot",
+                    "creating the verified tweet",
+                    "generating a verified tweet",
+                    "generated the tweet",
+                ])
+
+            def clean_text(txt: str) -> str:
+                """Remove HTML tags and trim whitespace."""
+                return re.sub(r"<[^>]+>", "", txt or "").strip()
+
+            def extract_text_from_data(data_list):
+                """Recursively find the latest valid text from nested data structures."""
+                if not isinstance(data_list, list):
+                    return ""
+                for item in reversed(data_list):
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("kind") == "text" and item.get("text"):
+                        txt = clean_text(item["text"])
+                        if txt and not is_noise(txt):
+                            return txt
+                    elif item.get("kind") == "data":
+                        nested = extract_text_from_data(item.get("data"))
+                        if nested:
+                            return nested
+                return ""
+
+            # Traverse main parts list
             if not parts:
                 return ""
             for part in reversed(parts):
                 if not isinstance(part, dict):
                     continue
-                # Direct text
                 if part.get("kind") == "text" and part.get("text"):
-                    txt = part["text"].strip()
-                    if txt and not txt.startswith("<"):
+                    txt = clean_text(part["text"])
+                    if txt and not is_noise(txt):
                         return txt
-                # Nested data list
-                if part.get("kind") == "data" and isinstance(part.get("data"), list):
-                    for item in reversed(part["data"]):
-                        if isinstance(item, dict):
-                            txt = item.get("text", "").strip()
-                            if txt and not txt.startswith("<"):
-                                return txt
+                elif part.get("kind") == "data":
+                    nested_txt = extract_text_from_data(part.get("data"))
+                    if nested_txt:
+                        return nested_txt
             return ""
 
         # ---- Extract latest command ----
@@ -133,7 +164,8 @@ class Handler:
             parts=[
                 MessagePart(
                     kind="text",
-                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
+                    text=f"Generated Twitter screenshot for @{username}\n\n"
+                        f"![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ],
             taskId=task_id,
@@ -146,7 +178,8 @@ class Handler:
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
+                    text=f"Generated Twitter screenshot for @{username}\n\n"
+                        f"![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ]
         )
@@ -160,6 +193,7 @@ class Handler:
         )
 
         return JSONRPCResponse(id=request.id, result=task_result)
+
 
     
     @staticmethod
