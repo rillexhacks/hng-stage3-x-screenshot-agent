@@ -26,7 +26,7 @@ class Handler:
    
     @staticmethod
     async def handle_message_send(request: JSONRPCRequest) -> JSONRPCResponse:
-        """Handle message/send requests (fixed latest-text extraction for Telex format)."""
+        """Handle message/send requests (robust latest-text extraction for Telex)."""
         params = request.params
         message = params.message
 
@@ -34,74 +34,130 @@ class Handler:
         context_id = message.contextId or str(uuid.uuid4())
         task_id = message.taskId or str(uuid.uuid4())
 
-        # ---- Robust latest_text() ----
+        # ---- Robust latest_text() with debug logging ----
         def latest_text(parts):
-            """Extract the newest valid tweet command from possibly nested message parts."""
-
+            """
+            Recursively extract candidate texts (in order encountered), clean them,
+            ignore noise, and return the last meaningful candidate.
+            """
             def is_noise(txt: str) -> bool:
-                """Return True if text is a Telex system/status message."""
-                lower = txt.lower()
-                return any(kw in lower for kw in [
+                if not txt:
+                    return True
+                lower = txt.lower().strip()
+                # noise patterns (extend if you see other system lines)
+                noise_keywords = [
                     "generating the tweet",
+                    "generating the tweet for",
                     "creating the tweet",
-                    "generated twitter screenshot",
                     "creating the verified tweet",
-                    "generating a verified tweet",
+                    "generated twitter screenshot",
                     "generated the tweet",
-                ])
+                    "creating the tweet now",
+                    "creating the tweet for",
+                ]
+                # also ignore very short fragments and pure punctuation
+                if len(lower) < 6:
+                    return True
+                for kw in noise_keywords:
+                    if kw in lower:
+                        return True
+                # ignore code blocks/markup markers
+                if lower.startswith("<pre") or lower.startswith("```"):
+                    return True
+                return False
 
-            def clean_text(txt: str) -> str:
-                """Remove HTML tags and trim whitespace."""
-                return re.sub(r"<[^>]+>", "", txt or "").strip()
-
-            def extract_text_from_data(data_list):
-                """Recursively find the latest valid text from nested data structures."""
-                if not isinstance(data_list, list):
+            def clean_text(raw: str) -> str:
+                if raw is None:
                     return ""
-                for item in reversed(data_list):
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("kind") == "text" and item.get("text"):
-                        txt = clean_text(item["text"])
-                        if txt and not is_noise(txt):
-                            return txt
-                    elif item.get("kind") == "data":
-                        nested = extract_text_from_data(item.get("data"))
-                        if nested:
-                            return nested
-                return ""
+                # unescape html entities, remove html tags, normalize whitespace
+                un = html.unescape(raw)
+                no_tags = re.sub(r"<[^>]+>", "", un)
+                # remove leftover &nbsp; etc which html.unescape may leave as non-breaking space
+                cleaned = re.sub(r"\s+", " ", no_tags).strip()
+                return cleaned
 
-            # Traverse main parts list
-            if not parts:
-                return ""
-            for part in reversed(parts):
-                if not isinstance(part, dict):
-                    continue
-                if part.get("kind") == "text" and part.get("text"):
-                    txt = clean_text(part["text"])
-                    if txt and not is_noise(txt):
-                        return txt
-                elif part.get("kind") == "data":
-                    nested_txt = extract_text_from_data(part.get("data"))
-                    if nested_txt:
-                        return nested_txt
+            candidates = []
+
+            def extract(node):
+                """Walk node which may be dict, list, or value and collect text candidates."""
+                if node is None:
+                    return
+                # If node is a list: check each item
+                if isinstance(node, list):
+                    for item in node:
+                        extract(item)
+                    return
+                # If node is a dict: check possible keys
+                if isinstance(node, dict):
+                    kind = node.get("kind")
+                    # direct text
+                    if kind == "text" and node.get("text"):
+                        txt = clean_text(node.get("text"))
+                        candidates.append(txt)
+                        return
+                    # sometimes Telex wraps text directly in 'text' on a dict without kind
+                    if "text" in node and not node.get("kind"):
+                        txt = clean_text(node.get("text"))
+                        candidates.append(txt)
+                    # nested 'data' may be list or dict
+                    if node.get("data") is not None:
+                        extract(node.get("data"))
+                    # sometimes there is a nested 'parts' structure inside data dict
+                    if node.get("parts") is not None:
+                        extract(node.get("parts"))
+                    return
+                # other types (string) -> consider directly
+                if isinstance(node, str):
+                    txt = clean_text(node)
+                    candidates.append(txt)
+                    return
+
+            # start extraction from top-level parts
+            extract(parts)
+
+            # debug log of candidates (won't break production)
+            logger.info(f"latest_text candidates (count={len(candidates)}): {candidates!r}")
+
+            # choose the last non-noise candidate
+            for cand in reversed(candidates):
+                if cand and not is_noise(cand):
+                    logger.info(f"latest_text selected: {cand!r}")
+                    return cand
+            logger.info("latest_text found no non-noise candidate.")
             return ""
 
         # ---- Extract latest command ----
-        latest_user_text = latest_text(message.parts) or ""
+        # Defensive: message.parts might be missing or None
+        parts_val = getattr(message, "parts", None) or message.get("parts") if isinstance(message, dict) else None
+        # If parts_val not present, try other likely places (fallback)
+        if not parts_val:
+            # some Telex shapes might put text directly under message.text or message.data
+            if isinstance(message, dict) and message.get("text"):
+                parts_val = [{"kind": "text", "text": message.get("text")}]
+            elif isinstance(message, dict) and message.get("data"):
+                parts_val = message.get("data")
+            else:
+                parts_val = []
+
+        latest_user_text = latest_text(parts_val) or ""
+        logger.info(f"🧩 Extracted latest_user_text (raw): {latest_user_text!r}")
+
         tweet_data = {}
         if latest_user_text:
             # Split by known tweet creation keywords (keep latest)
             split_pattern = r'(?=(?:create|generate|make)\s+(?:a\s+)?(?:verified\s+)?tweet)'
             segments = re.split(split_pattern, latest_user_text, flags=re.IGNORECASE)
             segments = [s.strip() for s in segments if s.strip()]
+            logger.info(f"Split segments from latest_user_text: {segments!r}")
             if segments:
                 parsed_data = HelperFunctions.parse_tweet_request(segments[-1])
+                logger.info(f"parse_tweet_request returned: {parsed_data!r}")
                 if parsed_data and "tweet_text" in parsed_data:
                     tweet_data = parsed_data
 
         # ---- Validate ----
         if "tweet_text" not in tweet_data:
+            logger.warning("Missing tweet content after extraction. Returning error.")
             return JSONRPCResponse(
                 id=request.id,
                 error={
@@ -136,7 +192,6 @@ class Handler:
         image_url = f"{os.getenv('AGENT_URL')}/image/{image_id}"
 
         # ---- Store image in Redis ----
-        import base64
         try:
             with open(filepath, "rb") as img_file:
                 image_bytes = img_file.read()
@@ -164,8 +219,7 @@ class Handler:
             parts=[
                 MessagePart(
                     kind="text",
-                    text=f"Generated Twitter screenshot for @{username}\n\n"
-                        f"![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
+                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ],
             taskId=task_id,
@@ -178,8 +232,7 @@ class Handler:
             parts=[
                 ArtifactPart(
                     kind="text",
-                    text=f"Generated Twitter screenshot for @{username}\n\n"
-                        f"![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
+                    text=f"Generated Twitter screenshot for @{username}\n\n![Tweet Screenshot]({image_url})\n\nView image: {image_url}"
                 )
             ]
         )
