@@ -126,21 +126,29 @@ class Handler:
             logger.info("latest_text found no non-noise candidate.")
             return ""
 
-        # ---- Extract latest command ----
+       # ---- Extract latest command ----
         # Defensive: message.parts might be missing or None
-        parts_val = getattr(message, "parts", None) or message.get("parts") if isinstance(message, dict) else None
-      
-        # If parts_val not present, try other likely places (fallback)
+        parts_val = None
+        if hasattr(message, "parts"):
+            parts_val = message.parts
+        elif isinstance(message, dict) and "parts" in message:
+            parts_val = message["parts"]
+
+        # If parts_val is None or empty, try other likely places (fallback)
         if not parts_val:
+            # Try to get from params.message directly
+            if isinstance(params.message, dict) and "parts" in params.message:
+                parts_val = params.message["parts"]
             # some Telex shapes might put text directly under message.text or message.data
-            if isinstance(message, dict) and message.get("text"):
+            elif isinstance(message, dict) and message.get("text"):
                 parts_val = [{"kind": "text", "text": message.get("text")}]
             elif isinstance(message, dict) and message.get("data"):
                 parts_val = message.get("data")
             else:
                 parts_val = []
 
-        logger.info(f" DEBUG parts_val type: {type(parts_val)}, value: {parts_val!r}")
+        logger.info(f"🔍 DEBUG parts_val type: {type(parts_val)}, length: {len(parts_val) if isinstance(parts_val, list) else 'N/A'}, value preview: {parts_val[:2] if isinstance(parts_val, list) and len(parts_val) > 0 else parts_val}")
+
         latest_user_text = latest_text(parts_val) or ""
         logger.info(f"🧩 Extracted latest_user_text (raw): {latest_user_text!r}")
 
