@@ -190,6 +190,7 @@ class Handler:
         likes = tweet_data.get("likes", 0)
         retweets = tweet_data.get("retweets", 0)
         replies = tweet_data.get("replies", 0)
+        views = tweet_data.get("views", 0)
         timestamp = tweet_data.get("timestamp", None)
 
         # ---- Generate screenshot ----
@@ -201,6 +202,7 @@ class Handler:
             likes=likes,
             retweets=retweets,
             replies=replies,
+            views=views,
             timestamp=timestamp
         )
 
@@ -303,6 +305,7 @@ class Handler:
                 likes=tweet_data.get("likes", 0),
                 retweets=tweet_data.get("retweets", 0),
                 replies=tweet_data.get("replies", 0),
+                views=tweet_data.get("views", 0),
                 timestamp=tweet_data.get("timestamp", None)
             )
             
