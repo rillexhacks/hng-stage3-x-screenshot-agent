@@ -7,6 +7,8 @@ from src.dependencies import redis_client
 from src.utils import HelperFunctions
 import uuid
 import logging
+import html
+import base64
 
 logger = logging.getLogger(__name__)
 
